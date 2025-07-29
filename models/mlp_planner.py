@@ -25,11 +25,16 @@ class MLPPlanner(nn.Module):
         
         # Build the sequential MLP architecture
         layers = []
+        self.batch_norms = []  # Store batch norm layers for testing
         
         # First layer: input_dim -> hidden_dim
         layers.append(nn.Linear(input_dim, hidden_dim))
         if use_batch_norm:
-            layers.append(nn.BatchNorm1d(hidden_dim))
+            bn1 = nn.BatchNorm1d(hidden_dim)
+            layers.append(bn1)
+            self.batch_norms.append(bn1)
+        else:
+            self.batch_norms.append(None)
         layers.append(self._get_activation())
         if dropout_rate > 0:
             layers.append(nn.Dropout(dropout_rate))
@@ -37,7 +42,11 @@ class MLPPlanner(nn.Module):
         # Second layer: hidden_dim -> hidden_dim
         layers.append(nn.Linear(hidden_dim, hidden_dim))
         if use_batch_norm:
-            layers.append(nn.BatchNorm1d(hidden_dim))
+            bn2 = nn.BatchNorm1d(hidden_dim)
+            layers.append(bn2)
+            self.batch_norms.append(bn2)
+        else:
+            self.batch_norms.append(None)
         layers.append(self._get_activation())
         if dropout_rate > 0:
             layers.append(nn.Dropout(dropout_rate))
@@ -45,7 +54,11 @@ class MLPPlanner(nn.Module):
         # Third layer: hidden_dim -> hidden_dim
         layers.append(nn.Linear(hidden_dim, hidden_dim))
         if use_batch_norm:
-            layers.append(nn.BatchNorm1d(hidden_dim))
+            bn3 = nn.BatchNorm1d(hidden_dim)
+            layers.append(bn3)
+            self.batch_norms.append(bn3)
+        else:
+            self.batch_norms.append(None)
         layers.append(self._get_activation())
         if dropout_rate > 0:
             layers.append(nn.Dropout(dropout_rate))
@@ -53,7 +66,11 @@ class MLPPlanner(nn.Module):
         # Fourth layer: hidden_dim -> hidden_dim // 2
         layers.append(nn.Linear(hidden_dim, hidden_dim // 2))
         if use_batch_norm:
-            layers.append(nn.BatchNorm1d(hidden_dim // 2))
+            bn4 = nn.BatchNorm1d(hidden_dim // 2)
+            layers.append(bn4)
+            self.batch_norms.append(bn4)
+        else:
+            self.batch_norms.append(None)
         layers.append(self._get_activation())
         if dropout_rate > 0:
             layers.append(nn.Dropout(dropout_rate))
@@ -97,7 +114,7 @@ class MLPPlanner(nn.Module):
         Forward pass of the MLP planner.
         
         Args:
-            x: Input tensor of shape (batch_size, input_dim)
+            x: Input tensor of shape (batch_size, input_dim) or (input_dim,)
         
         Returns:
             Output tensor of shape (batch_size, output_dim)
@@ -106,8 +123,18 @@ class MLPPlanner(nn.Module):
         if x.dim() == 1:
             x = x.unsqueeze(0)
         
-        # Pass through the sequential MLP
-        output = self.mlp(x)
+        # Handle single sample case for batch norm
+        if x.size(0) == 1 and self.training:
+            # For single sample in training mode, we need to handle batch norm carefully
+            # We'll temporarily switch to eval mode for single samples
+            was_training = self.training
+            self.eval()
+            output = self.mlp(x)
+            if was_training:
+                self.train()
+        else:
+            # Pass through the sequential MLP
+            output = self.mlp(x)
         
         return output
     
@@ -135,27 +162,27 @@ class MLPPlanner(nn.Module):
         current_x = self.mlp[0](current_x)  # Linear
         features['linear_0'] = current_x.clone()
         
+        layer_idx = 1
         if self.use_batch_norm:
-            current_x = self.mlp[1](current_x)  # BatchNorm
+            current_x = self.mlp[layer_idx](current_x)  # BatchNorm
             features['batch_norm_0'] = current_x.clone()
-            current_x = self.mlp[2](current_x)  # Activation
-            features['activation_0'] = current_x.clone()
-            if self.dropout_rate > 0:
-                current_x = self.mlp[3](current_x)  # Dropout
-                features['dropout_0'] = current_x.clone()
-        else:
-            current_x = self.mlp[1](current_x)  # Activation
-            features['activation_0'] = current_x.clone()
-            if self.dropout_rate > 0:
-                current_x = self.mlp[2](current_x)  # Dropout
-                features['dropout_0'] = current_x.clone()
+            layer_idx += 1
+        
+        current_x = self.mlp[layer_idx](current_x)  # Activation
+        features['activation_0'] = current_x.clone()
+        layer_idx += 1
+        
+        if self.dropout_rate > 0:
+            current_x = self.mlp[layer_idx](current_x)  # Dropout
+            features['dropout_0'] = current_x.clone()
+            layer_idx += 1
         
         # Continue for remaining layers...
         # For simplicity, we'll just return the final output
         # A more detailed implementation would track through each layer
         
-        # Final output
-        output = self.mlp(current_x)
+        # Final output - use the forward method to get the complete output
+        output = self.forward(x)
         features['output'] = output
         
         return features

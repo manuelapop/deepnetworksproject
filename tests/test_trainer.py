@@ -454,7 +454,7 @@ class TestTrainer:
             d_model=64,
             num_heads=4,
             num_layers=2,
-            seq_length=10
+            max_seq_length=10
         )
         
         trainer = Trainer(
