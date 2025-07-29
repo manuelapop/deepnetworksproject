@@ -82,6 +82,7 @@ class Trainer:
         self.best_val_loss = float('inf')
         self.best_epoch = 0
         self.patience_counter = 0
+        self.current_epoch = 0
         self.training_history = {
             'train_loss': [],
             'val_loss': [],
@@ -236,62 +237,23 @@ class Trainer:
         
         return avg_loss, metrics
     
-    def save_checkpoint(self, epoch: int, is_best: bool = False):
-        """Save model checkpoint."""
-        checkpoint = {
-            'epoch': epoch,
-            'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
-            'best_val_loss': self.best_val_loss,
-            'training_history': self.training_history,
-            'model_config': self._get_model_config()
-        }
+    def train_step(self, num_epochs: int = 10) -> Dict[str, Any]:
+        """
+        Train for a specified number of epochs.
         
-        # Save latest checkpoint
-        checkpoint_path = os.path.join(self.checkpoint_dir, 'latest_checkpoint.pth')
-        torch.save(checkpoint, checkpoint_path)
-        
-        # Save best checkpoint
-        if is_best and self.save_best:
-            best_checkpoint_path = os.path.join(self.checkpoint_dir, 'best_model.pth')
-            torch.save(checkpoint, best_checkpoint_path)
-    
-    def load_checkpoint(self, checkpoint_path: str):
-        """Load model checkpoint."""
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
-        
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        
-        if checkpoint['scheduler_state_dict'] and self.scheduler:
-            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-        
-        self.best_val_loss = checkpoint['best_val_loss']
-        self.training_history = checkpoint['training_history']
-        
-        return checkpoint['epoch']
-    
-    def _get_model_config(self) -> Dict[str, Any]:
-        """Get model configuration for saving."""
-        if hasattr(self.model, 'get_model_summary'):
-            return self.model.get_model_summary()
-        else:
-            return {
-                'model_type': type(self.model).__name__,
-                'num_parameters': sum(p.numel() for p in self.model.parameters())
-            }
-    
-    def train(self) -> Dict[str, List[float]]:
-        """Main training loop."""
+        Args:
+            num_epochs: Number of epochs to train for this step
+            
+        Returns:
+            Dictionary containing training results and status
+        """
         if self.verbose:
-            print(f"Starting training for {self.num_epochs} epochs...")
-            print(f"Device: {self.device}")
-            print(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
+            print(f"Training for {num_epochs} epochs (epochs {self.current_epoch+1}-{self.current_epoch+num_epochs})...")
         
-        start_time = time.time()
+        start_epoch = self.current_epoch
+        end_epoch = min(self.current_epoch + num_epochs, self.num_epochs)
         
-        for epoch in range(self.num_epochs):
+        for epoch in range(start_epoch, end_epoch):
             epoch_start_time = time.time()
             
             # Training phase
@@ -338,11 +300,92 @@ class Trainer:
                       f"Val Loss: {val_loss:.4f} - "
                       f"Time: {epoch_time:.2f}s")
             
-            # Early stopping
+            # Early stopping check
             if self.patience_counter >= self.early_stopping_patience:
                 if self.verbose:
                     print(f"Early stopping triggered after {epoch+1} epochs")
-                break
+                self.current_epoch = epoch + 1
+                return {
+                    'completed_epochs': epoch + 1,
+                    'total_epochs': self.num_epochs,
+                    'early_stopped': True,
+                    'best_val_loss': self.best_val_loss,
+                    'best_epoch': self.best_epoch
+                }
+            
+            self.current_epoch = epoch + 1
+        
+        # Check if training is complete
+        training_complete = self.current_epoch >= self.num_epochs
+        
+        return {
+            'completed_epochs': self.current_epoch,
+            'total_epochs': self.num_epochs,
+            'early_stopped': False,
+            'training_complete': training_complete,
+            'best_val_loss': self.best_val_loss,
+            'best_epoch': self.best_epoch
+        }
+    
+    def save_checkpoint(self, epoch: int, is_best: bool = False):
+        """Save model checkpoint."""
+        checkpoint = {
+            'epoch': epoch,
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
+            'best_val_loss': self.best_val_loss,
+            'training_history': self.training_history,
+            'model_config': self._get_model_config(),
+            'current_epoch': self.current_epoch
+        }
+        
+        # Save latest checkpoint
+        checkpoint_path = os.path.join(self.checkpoint_dir, 'latest_checkpoint.pth')
+        torch.save(checkpoint, checkpoint_path)
+        
+        # Save best checkpoint
+        if is_best and self.save_best:
+            best_checkpoint_path = os.path.join(self.checkpoint_dir, 'best_model.pth')
+            torch.save(checkpoint, best_checkpoint_path)
+    
+    def load_checkpoint(self, checkpoint_path: str):
+        """Load model checkpoint."""
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        
+        if checkpoint['scheduler_state_dict'] and self.scheduler:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        
+        self.best_val_loss = checkpoint['best_val_loss']
+        self.training_history = checkpoint['training_history']
+        self.current_epoch = checkpoint.get('current_epoch', 0)
+        
+        return checkpoint['epoch']
+    
+    def _get_model_config(self) -> Dict[str, Any]:
+        """Get model configuration for saving."""
+        if hasattr(self.model, 'get_model_summary'):
+            return self.model.get_model_summary()
+        else:
+            return {
+                'model_type': type(self.model).__name__,
+                'num_parameters': sum(p.numel() for p in self.model.parameters())
+            }
+    
+    def train(self) -> Dict[str, List[float]]:
+        """Main training loop - runs all epochs at once."""
+        if self.verbose:
+            print(f"Starting training for {self.num_epochs} epochs...")
+            print(f"Device: {self.device}")
+            print(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
+        
+        start_time = time.time()
+        
+        # Train all epochs
+        result = self.train_step(self.num_epochs)
         
         # Final test
         test_loss, test_metrics = self.test_model()

@@ -71,6 +71,10 @@ def parse_args():
                        help='Save best model')
     parser.add_argument('--verbose', action='store_true', default=True, 
                        help='Print training progress')
+    parser.add_argument('--step_training', action='store_true', 
+                       help='Train in steps instead of all epochs at once')
+    parser.add_argument('--step_size', type=int, default=10, 
+                       help='Number of epochs per step when using step training')
     
     # Evaluation
     parser.add_argument('--evaluate', action='store_true', help='Evaluate model after training')
@@ -226,7 +230,34 @@ def main():
     
     # Train model
     print(f"\nStarting training for {args.model.upper()} planner...")
-    training_history = trainer.train()
+    
+    if args.step_training:
+        print(f"Training in steps of {args.step_size} epochs...")
+        step_size = args.step_size
+        total_steps = args.epochs // step_size
+        
+        for step in range(total_steps):
+            print(f"\n{'='*40}")
+            print(f"STEP {step + 1}/{total_steps}")
+            print(f"{'='*40}")
+            
+            result = trainer.train_step(step_size)
+            
+            print(f"\nStep {step + 1} completed:")
+            print(f"  Completed epochs: {result['completed_epochs']}/{result['total_epochs']}")
+            print(f"  Best validation loss so far: {result['best_val_loss']:.4f}")
+            
+            if result['early_stopped']:
+                print("  Training stopped early due to no improvement")
+                break
+            
+            if result['training_complete']:
+                print("  Training completed!")
+                break
+        
+        training_history = trainer.training_history
+    else:
+        training_history = trainer.train()
     
     # Evaluate model
     if args.evaluate:
